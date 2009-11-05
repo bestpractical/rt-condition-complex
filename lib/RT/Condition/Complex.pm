@@ -4,7 +4,7 @@ use 5.008003;
 use strict;
 use warnings;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use base 'RT::Condition';
 
@@ -33,6 +33,24 @@ so you can re-use some of them many times in different combinations.
 =item simplicity - make things more simple for poeple who don't know how
 to program in perl, some complex things have to be programmed, but now
 then can be reused.
+
+=head1 INSTALLATION
+
+Since version 0.02 this extension depends on L<RT::Extension::ColumnMap>,
+first of all install it.
+
+    # install RT::Extension::ColumnMap
+
+    perl Makefile.PL
+    make
+    make install
+
+    # in RT_SiteConfig.pm
+    Set( @Plugins,
+        ... more plugin ...
+        RT::Extension::ColumnMap
+        RT::Condition::Complex
+    );
 
 =head1 HOW TO USE
 
@@ -80,14 +98,12 @@ depends if constant is a string or number, string comparision is cases insenseti
 
 =head2 Fields
 
-At this moment not many fields are available, but it's easy to add more. Patches
-are welcome. Here is the list:
+Fields are based on L<RT::Extension::ColumnMap>. At this moment not many
+fields are available, but it's easy to add more. Patches
+for the L<RT::Extension::ColumnMap> are welcome.
 
-=over 4
-
-=item Type, Field, OldValue and NewValue - basic properties of the current transaction.
-
-=back
+The current transaction has no prefix, so 'Type' is type of the current
+transaction. 'Ticket.' is prefix for the current ticket.
 
 =head2 Constants
 
@@ -123,12 +139,14 @@ my $parser = new Parse::BooleanLogic;
 use Regexp::Common qw(delimited);
 my $re_quoted = qr{$RE{delimited}{-delim=>qq{\'\"}}{-esc=>'\\'}};
 
+use RT::Extension::ColumnMap;
+my $re_field = RT::Extension::ColumnMap->RE('column');
+
 my $re_exec_module = qr{[a-z][a-z0-9-]+}i;
 # module argument must be quoted as we don't know if it's quote to
 # protect from AND/OR words or argument of the condition should be
 # quoted
 my $re_module_argument = qr{$re_quoted};
-my $re_field = qr{[a-z.]+}i;
 my $re_value = qr{$re_quoted|[-+]?[0-9]+};
 my $re_bin_op = qr{!?=|[><]=?|(?:not\s+)?(?:contains|starts\s+with|ends\s+with)}i;
 my $re_un_op = qr{IS\s+(?:NOT\s+)?NULL|}i;
@@ -148,9 +166,6 @@ my %op_handler = (
     'not ends with'    => sub { return rindex(lc reverse($_[0]), lc reverse($_[1]), 0) < 0 },
     'is null'          => sub { return !(defined $_[0] && length $_[0]) },
     'is not null'      => sub { return   defined $_[0] && length $_[0] },
-);
-my %field_handler = (
-    ( map { my $m = $_; lc $m => sub { $_[1]->$m() } } qw(Type Field OldValue NewValue) ),
 );
 
 sub IsApplicable {
@@ -172,9 +187,12 @@ my $solver = sub {
     my $cond = shift;
     my $self = $_[0];
     if ( $cond->{'op'} ) {
-        return $self->OpHandler($cond->{'op'})->(
-            $self->GetField( $cond->{'lhs'}, @_ ),
-            $self->GetValue( $cond->{'rhs'}, @_ )
+        return $self->SolveCondition(
+            Field       => $cond->{'lhs'},
+            Operator    => $cond->{'op'},
+            Value       => $self->GetValue( $cond->{'rhs'}, @_ ),
+            Transaction => $_[1],
+            Ticket      => $_[2],
         );
     }
     elsif ( $cond->{'module'} ) {
@@ -200,6 +218,24 @@ sub Solve {
     my $ticket = $self->TicketObj;
 
     return $parser->solve( $tree, $solver, $self, $txn, $ticket );
+}
+
+sub SolveCondition {
+    my $self = shift;
+    my %args = @_;
+
+    my $op_handler = $self->OpHandler( $args{'Operator'} );
+    my $value = $args{'Value'};
+    my $checker = sub { return $op_handler->( $_[0], $value ) };
+    
+    return RT::Extension::ColumnMap->Check(
+        String => $args{'Field'},
+        Objects => {
+            '' => $args{'Transaction'},
+            'Ticket' => $args{'Ticket'},
+        },
+        Checker => $checker,
+    );
 }
 
 sub ParseCode {
@@ -235,12 +271,6 @@ sub OpHandler {
     my $op = $_[1];
     $op =~ s/\s+/ /;
     return $op_handler{ lc $op };
-}
-
-sub GetField {
-    my $self = shift;
-    my $field = shift;
-    return $field_handler{ lc $field }->(@_);
 }
 
 sub GetValue {

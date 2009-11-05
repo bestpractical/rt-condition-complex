@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use RT::Condition::Complex::Test tests => 400;
+use RT::Condition::Complex::Test tests => 9;
 
 my $scrip;
 {
