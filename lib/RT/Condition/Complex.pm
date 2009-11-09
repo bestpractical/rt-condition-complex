@@ -317,8 +317,11 @@ sub DescribeTree {
 
 sub ParseCode {
     my $self = shift;
+    my $code = shift;
+    return $code if ref $code;
 
-    my $code = $self->ScripObj->CustomIsApplicableCode;
+    $code = $self->ScripObj->CustomIsApplicableCode
+        unless defined $code;
 
     my @errors = ();
     my $res = $parser->as_array(
